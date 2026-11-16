@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('aurum', {
   cacheMt5History: (request) => ipcRenderer.invoke('mt5:cache-history', request),
   mt5Quote: (symbol) => ipcRenderer.invoke('mt5:quote', symbol),
   mt5History: (symbol) => ipcRenderer.invoke('mt5:history', symbol),
+  mt5OrderHistory: () => ipcRenderer.invoke('mt5:order-history'),
   mt5PlaceOrder: (order) => ipcRenderer.invoke('mt5:place-order', order),
   mt5ClosePosition: (ticket) => ipcRenderer.invoke('mt5:close-position', ticket),
   mt5UpdatePositionStop: (ticket, stop) => ipcRenderer.invoke('mt5:update-position-stop', ticket, stop),

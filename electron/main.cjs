@@ -325,6 +325,7 @@ ipcMain.handle('mt5:positions', (_event, symbol) => requestEngine('mt5_positions
 ipcMain.handle('mt5:candles', (_event, symbol, timeframe, count, startPos) => requestEngine('mt5_candles', { symbol, timeframe, count, startPos }, 30_000))
 ipcMain.handle('mt5:quote', (_event, symbol) => requestEngine('mt5_quote', { symbol }, 20_000))
 ipcMain.handle('mt5:history', (_event, symbol) => requestEngine('mt5_history', { symbol }, 20_000))
+ipcMain.handle('mt5:order-history', () => requestEngine('mt5_order_history', {}, 60_000))
 ipcMain.handle('mt5:place-order', (_event, order) => requestEngine('mt5_place_order', order))
 ipcMain.handle('mt5:close-position', (_event, ticket) => requestEngine('mt5_close_position', { ticket }))
 ipcMain.handle('mt5:update-position-stop', (_event, ticket, stop) => requestEngine('mt5_update_position_stop', { ticket, stop }))

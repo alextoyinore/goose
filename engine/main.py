@@ -25,6 +25,7 @@ DAY_SECONDS = 86_400
 TIMEFRAME_SECONDS = 300  # Setup A is evaluated on M5 candles.
 DEFAULT_SETTINGS = {"startCapital": 12500.0, "riskPercent": 1.0, "spreadLimit": 0.4, "contractSizeOz": 100.0, "maxSignalsPerDay": 3, "maxOpenPositions": 1, "maxConsecutiveLosses": 2, "positionTrackingEnabled": False, "lanViewEnabled": False, "newsEvents": [], "enabledSetups": {"A": True, "B": True, "C": True}}
 ENGINE_VERSION = "0.2.0"
+AURUM_ORDER_MAGIC = 261115
 
 
 def mt5_module():
@@ -338,6 +339,83 @@ def mt5_history(symbol=None):
                       "direction": "LONG" if deal.type == bridge.DEAL_TYPE_SELL else "SHORT", "volume": float(deal.volume),
                       "price": float(deal.price), "profit": float(deal.profit), "time": int(deal.time), "reason": reason})
     return sorted(exits, key=lambda item: item["time"], reverse=True)[:20]
+
+
+def mt5_order_history():
+    """Summarize closed positions opened by Aurum's MT5 order ticket."""
+    bridge = mt5_module()
+    initialized, error = mt5_initialize(bridge)
+    if not initialized:
+        raise RuntimeError(f"MT5 connection unavailable: {error}")
+    account = bridge.account_info()
+    if account is None:
+        raise RuntimeError(f"Could not read MT5 account: {bridge.last_error()}")
+    end = datetime.now(timezone.utc)
+    start = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    deals = bridge.history_deals_get(start, end)
+    if deals is None:
+        raise RuntimeError(f"Could not read MT5 order history: {bridge.last_error()}")
+
+    grouped = {}
+    for deal in deals:
+        position_id = int(getattr(deal, "position_id", 0) or 0)
+        if position_id:
+            grouped.setdefault(position_id, []).append(deal)
+
+    open_positions = {}
+    positions = bridge.positions_get()
+    if positions is None:
+        raise RuntimeError(f"Could not read MT5 open positions: {bridge.last_error()}")
+    for position in positions:
+        if int(getattr(position, "magic", 0) or 0) != AURUM_ORDER_MAGIC:
+            continue
+        position_id = int(getattr(position, "identifier", position.ticket))
+        open_positions[position_id] = position
+
+    records = []
+    for position_id, items in grouped.items():
+        items.sort(key=lambda deal: (int(deal.time), int(getattr(deal, "time_msc", 0))))
+        opening_deals = [deal for deal in items if deal.entry == bridge.DEAL_ENTRY_IN]
+        aurum_entries = [deal for deal in opening_deals if int(getattr(deal, "magic", 0) or 0) == AURUM_ORDER_MAGIC]
+        if not aurum_entries:
+            continue
+        first_entry = aurum_entries[0]
+        entries = [deal for deal in items if deal.entry in (bridge.DEAL_ENTRY_IN, bridge.DEAL_ENTRY_INOUT)]
+        exits = [deal for deal in items if deal.entry in (bridge.DEAL_ENTRY_OUT, bridge.DEAL_ENTRY_OUT_BY, bridge.DEAL_ENTRY_INOUT)]
+        entry_volume = sum(float(deal.volume) for deal in entries)
+        exit_volume = sum(float(deal.volume) for deal in exits)
+        if entry_volume <= 0:
+            continue
+        is_open = position_id in open_positions or exit_volume + 1e-8 < entry_volume
+        if is_open:
+            continue
+        net_profit = sum(float(getattr(deal, "profit", 0) or 0) + float(getattr(deal, "commission", 0) or 0)
+                         + float(getattr(deal, "swap", 0) or 0) + float(getattr(deal, "fee", 0) or 0) for deal in items)
+        close_deals = [deal for deal in items if deal.entry in (bridge.DEAL_ENTRY_OUT, bridge.DEAL_ENTRY_OUT_BY, bridge.DEAL_ENTRY_INOUT)]
+        if not close_deals:
+            continue
+        last_close = close_deals[-1]
+        entry_price = sum(float(deal.price) * float(deal.volume) for deal in entries) / entry_volume
+        exit_volume_weighted = sum(float(deal.price) * float(deal.volume) for deal in close_deals)
+        exit_price = exit_volume_weighted / exit_volume if exit_volume else 0
+        reason = "STOP LOSS" if last_close.reason == bridge.DEAL_REASON_SL else "TAKE PROFIT" if last_close.reason == bridge.DEAL_REASON_TP else "MANUAL / OTHER"
+        outcome = "win" if net_profit > 1e-8 else "loss" if net_profit < -1e-8 else "breakeven"
+        records.append({"positionId": position_id, "symbol": first_entry.symbol,
+                        "direction": "LONG" if first_entry.type == bridge.DEAL_TYPE_BUY else "SHORT",
+                        "volume": round(entry_volume, 4), "entryPrice": entry_price, "exitPrice": exit_price,
+                        "openedAt": int(first_entry.time), "closedAt": int(last_close.time),
+                        "netProfit": round(net_profit, 2), "outcome": outcome, "reason": reason})
+
+    records.sort(key=lambda item: item["closedAt"], reverse=True)
+    wins = sum(item["outcome"] == "win" for item in records)
+    losses = sum(item["outcome"] == "loss" for item in records)
+    breakeven = sum(item["outcome"] == "breakeven" for item in records)
+    settled = wins + losses
+    return {"account": {"login": int(account.login), "server": str(account.server), "currency": str(account.currency)},
+            "stats": {"closed": len(records), "wins": wins, "losses": losses, "breakeven": breakeven,
+                      "open": len(open_positions), "winRate": round(100 * wins / settled, 1) if settled else 0,
+                      "netProfit": round(sum(item["netProfit"] for item in records), 2)},
+            "records": records[:1000], "totalRecords": len(records)}
 
 
 def mt5_place_order(request):
@@ -1420,6 +1498,8 @@ def main() -> None:
                 response = {"id": request_id, "type": "mt5_quote", **mt5_quote(request.get("symbol"))}
             elif command == "mt5_history":
                 response = {"id": request_id, "type": "mt5_history", "exits": mt5_history(request.get("symbol"))}
+            elif command == "mt5_order_history":
+                response = {"id": request_id, "type": "mt5_order_history", **mt5_order_history()}
             elif command == "mt5_place_order":
                 response = {"id": request_id, "type": "mt5_order", **mt5_place_order(request)}
             elif command == "mt5_close_position":

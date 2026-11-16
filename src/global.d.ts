@@ -19,6 +19,7 @@ declare global {
       cacheMt5History: (request: { symbol: string; timeframe: Timeframe; startDate: string; endDate: string; server?: string }) => Promise<{ symbol: string; timeframe: Timeframe; bars: number; cachedBars: number; newBars: number; availableStart: string | null; availableEnd: string | null }>
       mt5Quote: (symbol: string) => Promise<{ symbol: string; bid: number; ask: number; time: number }>
       mt5History: (symbol?: string) => Promise<{ exits: Mt5Exit[] }>
+      mt5OrderHistory: () => Promise<Mt5OrderHistory>
       mt5PlaceOrder: (order: { symbol: string; direction: 'LONG'|'SHORT'; volume: number; stop: number; target: number }) => Promise<{ accepted: boolean; ticket?: number; price?: number; message?: string }>
       mt5ClosePosition: (ticket: number) => Promise<{ accepted: boolean; ticket?: number; price?: number; message?: string }>
       mt5UpdatePositionStop: (ticket: number, stop: number) => Promise<{ accepted: boolean; ticket?: number; stop?: number; target?: number; message?: string }>
@@ -38,5 +39,7 @@ declare global {
 
 export type Mt5Position = { ticket: number; symbol: string; direction: 'LONG'|'SHORT'; volume: number; entry: number; stop: number; target: number; price: number; profit: number; openedAt: number; comment: string }
 export type Mt5Exit = { ticket: number; positionId: number; symbol: string; direction: 'LONG'|'SHORT'; volume: number; price: number; profit: number; time: number; reason: string }
+export type Mt5OrderRecord = { positionId: number; symbol: string; direction: 'LONG'|'SHORT'; volume: number; entryPrice: number; exitPrice: number; openedAt: number; closedAt: number; netProfit: number; outcome: 'win'|'loss'|'breakeven'; reason: string }
+export type Mt5OrderHistory = { account: { login: number; server: string; currency: string }; stats: { closed: number; wins: number; losses: number; breakeven: number; open: number; winRate: number; netProfit: number }; records: Mt5OrderRecord[]; totalRecords: number }
 
 export {}
