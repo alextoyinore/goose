@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aurum Mini Signal</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#111511;color:#e6e9e2;font:12px 'Segoe UI',Arial,sans-serif;border:1px solid #454638;border-radius:8px;overflow:hidden}.title{height:35px;display:flex;align-items:center;padding:0 10px;background:#1a1e18;border-bottom:1px solid #30372e;-webkit-app-region:drag}.title b{font-size:9px;letter-spacing:1px;color:#d5b875}.actions{margin-left:auto;display:flex;gap:5px;-webkit-app-region:no-drag}.actions button{border:0;border-radius:3px;background:#2a3027;color:#c7d0c1;font-size:9px;padding:5px 7px;cursor:pointer}.actions .close{background:transparent;color:#b9c0b4;font-size:15px;padding:1px 5px}.main{padding:11px}.side{display:inline-block;border-radius:3px;background:#1c3327;color:#75ca99;font-weight:700;font-size:9px;padding:4px 7px;letter-spacing:.5px}.side.sell{background:#39231f;color:#e28d80}.setup{font-size:12px;font-weight:650;margin:8px 0 3px}.meta{color:#8c9688;font-size:9px}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;padding-top:9px;border-top:1px solid #30372e}.levels small{display:block;color:#828c80;font-size:8px;margin-bottom:4px}.levels b{font-size:11px;font-weight:600}.stop{color:#dd7e71}.target{color:#70c393}.empty{color:#8e988a;font-size:10px;padding:12px 0}
+  </style>
+</head>
+<body>
+  <header class="title"><b>AURUM · SIGNAL</b><div class="actions"><button id="open">Open</button><button id="close" class="close" aria-label="Close mini window">×</button></div></header>
+  <main class="main"><div id="side" class="side">—</div><div id="setup" class="setup">Waiting for a signal</div><div id="meta" class="meta">Aurum is monitoring the market.</div><section id="levels" class="levels" hidden><div><small>ENTRY</small><b id="entry">—</b></div><div><small>STOP</small><b id="stop" class="stop">—</b></div><div><small>TARGET</small><b id="target" class="target">—</b></div></section></main>
+  <script>
+    document.getElementById('open').addEventListener('click', () => window.aurum?.windowControls.showMain())
+    document.getElementById('close').addEventListener('click', () => window.aurum?.windowControls.close())
+    window.aurum?.onEngineEvent(event => {
+      if (event.type !== 'mini-signal' || !event.signal) return
+      const signal = event.signal
+      const side = document.getElementById('side')
+      side.textContent = signal.direction
+      side.className = `side ${signal.direction === 'SELL' ? 'sell' : ''}`
+      document.getElementById('setup').textContent = signal.setupName || 'Signal'
+      document.getElementById('meta').textContent = `${signal.session || 'Market session'} · ${Math.round((signal.confidence || 0) * 100)}% confidence`
+      document.getElementById('entry').textContent = Number(signal.entry).toFixed(2)
+      document.getElementById('stop').textContent = Number(signal.stop).toFixed(2)
+      document.getElementById('target').textContent = Number(signal.target).toFixed(2)
+      document.getElementById('levels').hidden = false
+    })
+  </script>
+</body>
+</html>
