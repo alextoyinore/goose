@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const { spawn } = require('node:child_process')
 const http = require('node:http')
 const os = require('node:os')
+const crypto = require('node:crypto')
 
 process.on('uncaughtException', error => console.error('[fatal] uncaught main-process error:', error))
 process.on('unhandledRejection', error => console.error('[fatal] unhandled main-process rejection:', error))
@@ -94,6 +95,31 @@ function publishSignal(signal, notify = false) {
     const notification = new Notification({ title: `Aurum signal · ${latestSignal.direction}`, body: `${latestSignal.setupName} · Entry ${latestSignal.entry.toFixed(2)} · SL ${latestSignal.stop.toFixed(2)} · TP ${latestSignal.target.toFixed(2)}` })
     notification.on('click', showMainWindow); notification.show()
   }
+}
+
+function snapshotDirectory() {
+  const directory = path.join(app.getPath('userData'), 'winning-snapshots')
+  fs.mkdirSync(directory, { recursive: true })
+  return directory
+}
+
+function saveWinningSnapshot(metadata, dataUrl) {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''))
+  if (!match) throw new TypeError('Snapshot must be a PNG image')
+  const image = Buffer.from(match[1], 'base64')
+  if (!image.length || image.length > 20 * 1024 * 1024) throw new RangeError('Snapshot image exceeds the 20 MB limit')
+  const directory = snapshotDirectory(), id = `${Date.now()}-${crypto.randomUUID()}`
+  const record = { ...metadata, id, savedAt: new Date().toISOString() }
+  fs.writeFileSync(path.join(directory, `${id}.png`), image)
+  fs.writeFileSync(path.join(directory, `${id}.json`), JSON.stringify(record), 'utf8')
+  return record
+}
+
+function listWinningSnapshots() {
+  const directory = snapshotDirectory()
+  return fs.readdirSync(directory).filter(name => name.endsWith('.json')).map(name => {
+    try { return JSON.parse(fs.readFileSync(path.join(directory, name), 'utf8')) } catch { return null }
+  }).filter(Boolean).sort((a, b) => Number(b.outcomeTime || b.timestamp) - Number(a.outcomeTime || a.timestamp))
 }
 
 function updateMarket(value) {
@@ -296,7 +322,18 @@ function buildAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 ipcMain.handle('signal:update', (_event, signal, notify) => { publishSignal(signal, !!notify); return { updated: true } })
+ipcMain.handle('snapshot:save', (_event, metadata, dataUrl) => saveWinningSnapshot(metadata, dataUrl))
+ipcMain.handle('snapshot:list', () => listWinningSnapshots())
+ipcMain.handle('snapshot:read', (_event, id) => {
+  if (!/^[0-9]+-[0-9a-f-]{36}$/i.test(String(id))) throw new TypeError('Invalid snapshot id')
+  const image = fs.readFileSync(path.join(snapshotDirectory(), `${id}.png`))
+  return `data:image/png;base64,${image.toString('base64')}`
+})
 ipcMain.on('market:update', (_event, market) => updateMarket(market))
+ipcMain.on('ui:set-zoom', (event, factor) => {
+  const zoom = Number(factor)
+  if (Number.isFinite(zoom)) event.sender.setZoomFactor(Math.min(1.25, Math.max(0.8, zoom)))
+})
 ipcMain.handle('lan:set-enabled', (_event, enabled) => setLanViewEnabled(!!enabled))
 ipcMain.on('window:toggle-topmost', () => toggleAlwaysOnTop())
 ipcMain.on('window:show-main', showMainWindow)

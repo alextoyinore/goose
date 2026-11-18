@@ -23,7 +23,7 @@ except ImportError:
 
 DAY_SECONDS = 86_400
 TIMEFRAME_SECONDS = 300  # Setup A is evaluated on M5 candles.
-DEFAULT_SETTINGS = {"startCapital": 12500.0, "riskPercent": 1.0, "spreadLimit": 0.4, "contractSizeOz": 100.0, "maxSignalsPerDay": 3, "maxOpenPositions": 1, "maxConsecutiveLosses": 2, "positionTrackingEnabled": False, "lanViewEnabled": False, "newsEvents": [], "enabledSetups": {"A": True, "B": True, "C": True}}
+DEFAULT_SETTINGS = {"startCapital": 12500.0, "riskPercent": 1.0, "spreadLimit": 0.4, "contractSizeOz": 100.0, "setupCMinRR": 2.0, "maxSignalsPerDay": 3, "maxOpenPositions": 1, "maxConsecutiveLosses": 2, "positionTrackingEnabled": False, "lanViewEnabled": False, "newsEvents": [], "enabledSetups": {"A": True, "B": True, "C": True}}
 ENGINE_VERSION = "0.2.0"
 AURUM_ORDER_MAGIC = 261115
 
@@ -451,6 +451,12 @@ def mt5_place_order(request):
         raise ValueError("For a buy, stop loss must be below the live ask and take profit above it")
     if direction == "SHORT" and not (target < price < stop):
         raise ValueError("For a sell, take profit must be below the live bid and stop loss above it")
+    minimum_rr = request.get("minimumRR")
+    if minimum_rr is not None:
+        minimum_rr = float(minimum_rr)
+        live_rr = (target - price) / (price - stop) if direction == "LONG" else (price - target) / (stop - price)
+        if not math.isfinite(minimum_rr) or live_rr < minimum_rr:
+            raise ValueError(f"Market moved: remaining reward-to-risk is 1:{live_rr:.2f}, below the required 1:{minimum_rr:.2f}")
     if volume < info.volume_min or volume > info.volume_max:
         raise ValueError(f"Volume must be between {info.volume_min} and {info.volume_max} lots")
     steps = round(volume / info.volume_step)
@@ -746,6 +752,9 @@ def apply_timeframe_alignment(signals: list[dict], m5: list[dict], m15: list[dic
         if as_of is not None and signal_time > as_of:
             continue
 
+        signal["drawings"] = [d for d in signal.get("drawings", []) if d.get("kind") != "riskReward"]
+        signal["drawings"].append({"kind": "riskReward", "id": f"rr-{signal['id']}", "label": "RISK / REWARD", "time": signal_time, "entry": float(signal["entry"]), "stop": float(signal["stop"]), "target": float(signal["target"]), "direction": direction, "rMultiple": round(abs(float(signal["target"]) - float(signal["entry"])) / max(1e-9, abs(float(signal["entry"]) - float(signal["stop"]))), 2)})
+
         h1_direction, h1_state = timeframe_tendency(h1, signal_time, 60 * 60, 50)
         h4_direction, h4_state = timeframe_tendency(h4, signal_time, 4 * 60 * 60, 50)
         m15_direction, m15_state = timeframe_tendency(m15, signal_time, 15 * 60, 20)
@@ -869,7 +878,7 @@ def liquidity_sweep_signals(candles: list[dict]) -> list[dict]:
     return sorted(signals, key=lambda signal: signal["timestamp"])
 
 
-def trend_pullback_signals(m15: list[dict], h1: list[dict]) -> list[dict]:
+def trend_pullback_signals(m15: list[dict], h1: list[dict], min_target_r: float = 2.0) -> list[dict]:
     """Setup C: H1 EMA50 bias with an M15 EMA20/session VWAP rejection."""
     m15 = sorted(m15, key=lambda candle: candle["time"])
     h1 = sorted(h1, key=lambda candle: candle["time"])
@@ -924,10 +933,9 @@ def trend_pullback_signals(m15: list[dict], h1: list[dict]) -> list[dict]:
         risk_distance = abs(entry - stop)
         if risk_distance <= 0:
             continue
-        target = prior_target if (direction == "LONG" and prior_target > entry) or (direction == "SHORT" and prior_target < entry) else (entry + 1.5 * risk_distance if direction == "LONG" else entry - 1.5 * risk_distance)
-        r_multiple = abs(target - entry) / risk_distance
-        if r_multiple < 1.0:
-            continue
+        structural_r = abs(prior_target - entry) / risk_distance if (direction == "LONG" and prior_target > entry) or (direction == "SHORT" and prior_target < entry) else 0
+        r_multiple = max(float(min_target_r), structural_r)
+        target = entry + r_multiple * risk_distance if direction == "LONG" else entry - r_multiple * risk_distance
         timestamp = int(bar["time"])
         signal_id = f"C-XAUUSD-{timestamp}"
         zone_top, zone_bottom = max(ema, vwap), min(ema, vwap)
@@ -1281,7 +1289,7 @@ def backtest(connection, request):
     candidates = []
     if enabled.get("A", True): candidates.extend(opening_range_signals(m5))
     if enabled.get("B", True): candidates.extend(liquidity_sweep_signals(m5))
-    if enabled.get("C", True) and m15 and h1: candidates.extend(trend_pullback_signals(m15, h1))
+    if enabled.get("C", True) and m15 and h1: candidates.extend(trend_pullback_signals(m15, h1, config["setupCMinRR"]))
     candidates = apply_timeframe_alignment(candidates, m5, m15, h1, h4, int(datetime.now(timezone.utc).timestamp()))
     candidates = [signal for signal in candidates if signal.get("alignmentEligible", True)]
     if sample_start is not None:
@@ -1434,6 +1442,9 @@ def main() -> None:
                 merged["enabledSetups"] = {key: bool(merged["enabledSetups"].get(key, True)) for key in ("A", "B", "C")}
                 if not (100 <= float(merged["startCapital"]) <= 100000000 and 0.01 <= float(merged["riskPercent"]) <= 10 and 0 <= float(merged["spreadLimit"]) <= 100 and 1 <= float(merged.get("contractSizeOz", 100)) <= 10000):
                     raise ValueError("Settings are outside allowed ranges")
+                if not 2 <= float(merged.get("setupCMinRR", 2)) <= 10:
+                    raise ValueError("Setup C minimum R:R must be between 2 and 10")
+                merged["setupCMinRR"] = float(merged.get("setupCMinRR", 2))
                 merged["contractSizeOz"] = float(merged.get("contractSizeOz", 100))
                 merged["positionTrackingEnabled"] = bool(merged.get("positionTrackingEnabled", False))
                 merged["lanViewEnabled"] = bool(merged.get("lanViewEnabled", False))
@@ -1451,11 +1462,12 @@ def main() -> None:
                 m15 = validate_candles(supplied.get("M15", []), "M15")
                 h1 = validate_candles(supplied.get("H1", []), "H1")
                 h4 = validate_candles(supplied.get("H4", []), "H4")
-                enabled_setups = settings(connection)["enabledSetups"]
+                current_settings = settings(connection)
+                enabled_setups = current_settings["enabledSetups"]
                 signals = []
                 if enabled_setups.get("A", True): signals.extend(opening_range_signals(m5))
                 if enabled_setups.get("B", True): signals.extend(liquidity_sweep_signals(m5))
-                if enabled_setups.get("C", True): signals.extend(trend_pullback_signals(m15, h1))
+                if enabled_setups.get("C", True): signals.extend(trend_pullback_signals(m15, h1, current_settings["setupCMinRR"]))
                 now = int(datetime.now(timezone.utc).timestamp())
                 signals = apply_timeframe_alignment(signals, m5, m15, h1, h4, now)
                 signals.sort(key=lambda signal: signal["timestamp"])

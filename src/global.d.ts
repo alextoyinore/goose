@@ -2,6 +2,7 @@ import type { Candle, Timeframe } from './data/types'
 import type { AccountState, AnalyzeCandles, EngineAnalysis, EngineStatus, EngineTradeMarked, EngineHistory, BacktestRequest, BacktestResult, RiskSettings } from './data/engine'
 
 declare global {
+  type WinSnapshotMetadata = { id: string; signalId: string; setupName: string; direction: 'LONG'|'SHORT'; timestamp: number; outcome: string; outcomeTime: number | null; outcomePrice: number | null; outcomeR: number | null; entry: number; stop: number; target: number; taken: boolean; resultR: number | null; savedAt: string }
   interface Window {
     aurum?: {
       analyze: (candles: AnalyzeCandles | Candle[]) => Promise<EngineAnalysis & AccountState>
@@ -20,7 +21,7 @@ declare global {
       mt5Quote: (symbol: string) => Promise<{ symbol: string; bid: number; ask: number; time: number }>
       mt5History: (symbol?: string) => Promise<{ exits: Mt5Exit[] }>
       mt5OrderHistory: () => Promise<Mt5OrderHistory>
-      mt5PlaceOrder: (order: { symbol: string; direction: 'LONG'|'SHORT'; volume: number; stop: number; target: number }) => Promise<{ accepted: boolean; ticket?: number; price?: number; message?: string }>
+      mt5PlaceOrder: (order: { symbol: string; direction: 'LONG'|'SHORT'; volume: number; stop: number; target: number; minimumRR?: number }) => Promise<{ accepted: boolean; ticket?: number; price?: number; message?: string }>
       mt5ClosePosition: (ticket: number) => Promise<{ accepted: boolean; ticket?: number; price?: number; message?: string }>
       mt5UpdatePositionStop: (ticket: number, stop: number) => Promise<{ accepted: boolean; ticket?: number; stop?: number; target?: number; message?: string }>
       windowControls: { minimize: () => void; toggleMaximize: () => void; close: () => void; showMain: () => void; quit: () => void }
@@ -28,7 +29,11 @@ declare global {
       getHistory: (limit?: number) => Promise<EngineHistory>
       runBacktest: (payload: BacktestRequest) => Promise<BacktestResult>
       updateSignal: (signal: unknown, notify?: boolean) => void
+      saveWinningSnapshot: (metadata: Omit<WinSnapshotMetadata, 'id'|'savedAt'>, dataUrl: string) => Promise<WinSnapshotMetadata>
+      listWinningSnapshots: () => Promise<WinSnapshotMetadata[]>
+      readWinningSnapshot: (id: string) => Promise<string>
       updateMarket: (market: { symbol: string; bid: number; ask: number; time: number }) => void
+      setUiZoom: (factor: number) => void
       setLanView: (enabled: boolean) => Promise<{ enabled: boolean; urls?: string[]; error?: string }>
       toggleAlwaysOnTop: () => void
       openMiniWindow: () => void

@@ -8,6 +8,7 @@ export type Drawing =
   | { kind: 'level'; id: string; label: string; time: number; price: number; color: string; dashed?: boolean }
   | { kind: 'marker'; id: string; label: string; time: number; price: number; color: string; shape: 'arrowUp' | 'arrowDown' | 'dot' }
   | { kind: 'path'; id: string; label: string; points: DrawingPoint[]; color: string; dashed?: boolean; width?: number }
+  | { kind: 'riskReward'; id: string; label: string; time: number; entry: number; stop: number; target: number; direction: 'LONG' | 'SHORT'; rMultiple: number }
 
 export function setupBDrawings(candles: Candle[]): Drawing[] {
   if (candles.length < 8) return []
